@@ -57,34 +57,30 @@ For local runs, export the same vars before starting the worker (or in `bun run 
 
 ## Email worker test endpoint
 
-- `GET /test/email` and `POST /test/email` send a fixed ASCII node-status test email to confirm Cloudflare send-email binding is working.
+- `GET /test/email` and `POST /test/email` send a node-status test email with HTML table format and a plain-text fallback.
 - Endpoint is behind existing Basic Auth.
 - Configure in `wrangler.jsonc`:
   - `EMAIL_TEST_RECIPIENT`: destination email for the test send
   - `EMAIL_FROM_ADDRESS`: sender address used by the test message; if set with comma-separated addresses, only the first valid value is used.
   - `EMAIL_TEST_NODE_STATUS` (optional): `up` or `down` to force template style. Defaults to `up`.
 
-Example body (NODE UP):
+Example text fallback body (NODE UP):
 
 ```txt
-+===============================================================+
-|                     PING MONITOR ALERT                        |
-+===============================================================+
-| Event       : NODE UP                                         |
-| Node        : api-node-01                                   |
-| Source      : ping-monitor@network-internal.hugeshop.com      |
-| Target      : network-internal.hugeshop.com                 |
-| Status      : connected                                     |
-| Recorded At (ISO)    : 2026-05-03T01:02:03.000Z           |
-| Recorded At (Sydney) : Sunday 3 May 2026 at 11:02:03 AEST    |
-| Packet Loss : 0                                           |
-| Latency ms  : min/avg/max = -/-/- |
-| Std Dev     : -                                          |
-+---------------------------------------------------------------+
-| Reason      : Test trigger from /test/email                  |
-| Notes       : Heartbeat received and network reachable.     |
-| Action      : No action required.                         |
-+===============================================================+
+PING MONITOR ALERT
+Event - NODE UP
+Node - api-node-01
+Source - ping-monitor@network-internal.hugeshop.com
+Target - network-internal.hugeshop.com
+Status - connected
+Recorded At (ISO) - 2026-05-03T01:02:03.000Z
+Recorded At (Sydney) - Sunday 3 May 2026 at 11:02:03 AEST
+Packet Loss - 0
+Latency ms - min/avg/max = -/-/-
+Std Dev - -
+Reason - Test trigger from /test/email
+Notes - Heartbeat received and network reachable.
+Action - No action required.
 ```
 
 Successful responses return `ok: true` and may include `messageId`; failures return `ok: false` and error details.
@@ -113,6 +109,30 @@ For production with source-based indexing:
 
 ```txt
 bunx wrangler d1 execute PING_DB --file ./migrations/0002_source_index.sql
+```
+
+Apply per-node health migration:
+
+```txt
+bunx wrangler d1 execute PING_DB --local --file ./migrations/0003_node_health.sql
+```
+
+For production:
+
+```txt
+bunx wrangler d1 execute PING_DB --file ./migrations/0003_node_health.sql
+```
+
+Apply node-health status duration migration:
+
+```txt
+bunx wrangler d1 execute PING_DB --local --file ./migrations/0004_node_health_status_since.sql
+```
+
+For production:
+
+```txt
+bunx wrangler d1 execute PING_DB --file ./migrations/0004_node_health_status_since.sql
 ```
 
 If this is an existing deployment, run migration once before you send traffic so schema is ready.
