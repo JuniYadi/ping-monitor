@@ -1,0 +1,16 @@
+{
+  "name": "ping-monitor-api",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "login": "wrangler login",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "hono": "^4.12.16"
+  },
+  "devDependencies": {
+    "wrangler": "^4.4.0"
+  }
+}

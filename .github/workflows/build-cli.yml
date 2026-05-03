@@ -1,0 +1,50 @@
+name: Build CLI
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  build-cli:
+    name: Build cli.ts (${{ matrix.label }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: ubuntu-latest
+            target: bun-linux-x64
+            label: linux-x64
+            output: dist/ping-monitor-linux-x64
+          - runs-on: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            label: linux-arm64
+            output: dist/ping-monitor-linux-arm64
+          - runs-on: macos-13
+            target: bun-darwin-x64
+            label: macos-x64
+            output: dist/ping-monitor-macos-x64
+          - runs-on: macos-14
+            target: bun-darwin-arm64
+            label: macos-arm64
+            output: dist/ping-monitor-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Compile CLI
+        run: |
+          bun build cli.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=${{ matrix.output }}
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.label }}
+          path: ${{ matrix.output }}
+          if-no-files-found: error
