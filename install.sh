@@ -33,10 +33,18 @@ require_value() {
 prompt_value() {
   local prompt=$1
   local value_name=$2
+  local default_value=$3
   local value=""
 
+  if [[ -n "${default_value}" ]]; then
+    echo "${default_value}"
+    return
+  fi
+
   while true; do
-    read -r -p "${prompt}" value
+    if ! read -r -p "${prompt}" value < /dev/tty; then
+      die "Cannot read ${value_name}. Set PING_MONITOR_SERVER before running non-interactively."
+    fi
     if [[ -n "${value}" ]]; then
       echo "${value}"
       return
@@ -47,9 +55,17 @@ prompt_value() {
 
 prompt_auth() {
   local value=""
+  local default_value=$1
+
+  if [[ -n "${default_value}" ]]; then
+    echo "${default_value}"
+    return
+  fi
 
   while true; do
-    read -r -p "Auth (username:password): " value
+    if ! read -r -p "Auth (username:password): " value < /dev/tty; then
+      die "Cannot read Auth. Set PING_MONITOR_AUTH before running non-interactively."
+    fi
     if [[ "${value}" == *:* && ! "${value}" == ":"* && ! "${value}" == *":" ]]; then
       echo "${value}"
       return
@@ -263,8 +279,8 @@ main() {
   [[ "${platform}" == "unsupported" ]] && die "Unsupported OS. Only Linux and macOS are supported"
   [[ "${arch}" == "unsupported" ]] && die "Unsupported architecture. Only x64 and arm64 are supported"
 
-  server=$(prompt_value "Server: " "Server")
-  auth=$(prompt_auth)
+  server=$(prompt_value "Server: " "Server" "${PING_MONITOR_SERVER:-}")
+  auth=$(prompt_auth "${PING_MONITOR_AUTH:-}")
 
   require_value "${server}" "Server"
   require_value "${auth}" "Auth"
