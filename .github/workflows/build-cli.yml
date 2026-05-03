@@ -24,7 +24,7 @@ jobs:
             target: bun-linux-arm64
             label: linux-arm64
             output: dist/ping-monitor-linux-arm64
-          - runs-on: macos-13
+          - runs-on: macos-15-intel
             target: bun-darwin-x64
             label: macos-x64
             output: dist/ping-monitor-macos-x64
