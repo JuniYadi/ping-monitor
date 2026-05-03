@@ -1,5 +1,11 @@
 # ping-monitor
 
+Install as background service (auto-start):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuniYadi/ping-monitor/main/install.sh | bash
+```
+
 To install dependencies:
 
 ```bash
