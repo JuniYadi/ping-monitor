@@ -30,6 +30,14 @@ require_value() {
   fi
 }
 
+usage() {
+  cat <<'EOF'
+Usage: install.sh [--server <server>] [--auth <username:password>]
+
+The installer reads interactive values from terminal unless provided.
+EOF
+}
+
 prompt_value() {
   local prompt=$1
   local value_name=$2
@@ -42,9 +50,14 @@ prompt_value() {
   fi
 
   while true; do
-    if ! read -r -p "${prompt}" value < /dev/tty; then
+    if ! printf '%s' "${prompt}" > /dev/tty; then
+      die "Cannot write to terminal while reading ${value_name}. Set PING_MONITOR_SERVER before running non-interactively."
+    fi
+
+    if ! read -r value < /dev/tty; then
       die "Cannot read ${value_name}. Set PING_MONITOR_SERVER before running non-interactively."
     fi
+
     if [[ -n "${value}" ]]; then
       echo "${value}"
       return
@@ -63,7 +76,11 @@ prompt_auth() {
   fi
 
   while true; do
-    if ! read -r -p "Auth (username:password): " value < /dev/tty; then
+    if ! printf 'Auth (username:password): ' > /dev/tty; then
+      die "Cannot write to terminal while reading Auth. Set PING_MONITOR_AUTH before running non-interactively."
+    fi
+
+    if ! read -r value < /dev/tty; then
       die "Cannot read Auth. Set PING_MONITOR_AUTH before running non-interactively."
     fi
     if [[ "${value}" == *:* && ! "${value}" == ":"* && ! "${value}" == *":" ]]; then
@@ -272,6 +289,7 @@ main() {
   local arch
   local server
   local auth
+  local arg
 
   platform=$(detect_platform)
   arch=$(detect_arch)
@@ -279,8 +297,42 @@ main() {
   [[ "${platform}" == "unsupported" ]] && die "Unsupported OS. Only Linux and macOS are supported"
   [[ "${arch}" == "unsupported" ]] && die "Unsupported architecture. Only x64 and arm64 are supported"
 
-  server=$(prompt_value "Server: " "Server" "${PING_MONITOR_SERVER:-}")
-  auth=$(prompt_auth "${PING_MONITOR_AUTH:-}")
+  while [[ $# -gt 0 ]]; do
+    arg=$1
+
+    case "${arg}" in
+      --server)
+        shift
+        [[ $# -lt 1 ]] && die "--server requires a value"
+        server=$1
+        shift
+        ;;
+      --auth)
+        shift
+        [[ $# -lt 1 ]] && die "--auth requires a value"
+        auth=$1
+        shift
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        die "Unknown argument: ${arg}"
+        ;;
+    esac
+  done
+
+  server=${server:-${PING_MONITOR_SERVER:-}}
+  auth=${auth:-${PING_MONITOR_AUTH:-}}
+
+  if [[ -z "${server}" ]]; then
+    server=$(prompt_value "Server: " "Server")
+  fi
+
+  if [[ -z "${auth}" ]]; then
+    auth=$(prompt_auth)
+  fi
 
   require_value "${server}" "Server"
   require_value "${auth}" "Auth"

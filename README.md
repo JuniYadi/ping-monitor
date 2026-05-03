@@ -3,7 +3,23 @@
 Install as background service (auto-start):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JuniYadi/ping-monitor/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/JuniYadi/ping-monitor/main/install.sh | bash -s -- \
+  --server "https://your-server" \
+  --auth "username:password"
+```
+
+You can also pass values via environment variables:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuniYadi/ping-monitor/main/install.sh | \
+  env PING_MONITOR_SERVER="https://your-server" PING_MONITOR_AUTH="username:password" bash -s --
+```
+
+If you want interactive prompts instead, run the installer directly so it can read from the terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuniYadi/ping-monitor/main/install.sh -o /tmp/install.sh
+bash /tmp/install.sh
 ```
 
 To install dependencies:
