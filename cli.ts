@@ -52,7 +52,7 @@ export type CliOptions = {
 };
 
 const DEFAULT_SERVER = "localhost:8787";
-const HELP_TEXT = `Usage: cli.ts [options]\n\nOptions:\n  --help, -h           Show this help message\n  --server <addr>      API server URL or host (default: ${DEFAULT_SERVER})\n  --server=<addr>      Same as --server\n  --auth <cred>        HTTP basic auth as username:password\n  --auth=<cred>        Same as --auth\n`;
+const HELP_TEXT = `Usage: cli.ts [options]\n\nCommands:\n  Send a 5-packet ICMP ping to 8.8.8.8 and POST the parsed result to /ping on the server.\n\nOptions:\n  --help, -h           Show this help message\n  --server <addr>      API server URL or host (default: ${DEFAULT_SERVER})\n  --server=<addr>      Same as --server\n  --auth <cred>        HTTP basic auth as username:password\n  --auth=<cred>        Same as --auth\n`;
 
 export function parseAuthOption(rawAuth: string): string {
   const separatorIndex = rawAuth.indexOf(":");

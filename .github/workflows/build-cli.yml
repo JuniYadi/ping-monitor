@@ -1,5 +1,8 @@
 name: Build CLI
 
+permissions:
+  contents: write
+
 on:
   release:
     types:
@@ -48,3 +51,9 @@ jobs:
           name: cli-${{ matrix.label }}
           path: ${{ matrix.output }}
           if-no-files-found: error
+
+      - name: Attach to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ matrix.output }}
