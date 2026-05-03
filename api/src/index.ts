@@ -919,6 +919,14 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function getReasonPreview(reason: string, maxLength = 36): string {
+  if (reason.length <= maxLength) {
+    return reason;
+  }
+
+  return `${reason.slice(0, maxLength - 1)}…`;
+}
+
 export function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: HostnameSortDirection): string {
   const nextSortDirection = sortDirection === "asc" ? "desc" : "asc";
   const sortGlyph = sortDirection === "asc" ? "&#9650;" : "&#9660;";
@@ -933,9 +941,9 @@ export function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection
         <td>${node.status}</td>
         <td>${formatLatency(node)}</td>
         <td><span class="last-update" data-recorded-at="${new Date(node.recordedAt).toISOString()}">${toRelativeTime(node.recordedAt)} <span class="last-update-meta" data-utc-time="${new Date(node.recordedAt).toISOString()}">UTC: ${new Date(node.recordedAt).toISOString()}</span></span></td>
-         <td><span class="reason-text" title="${escapeHtml(node.reason)}">${escapeHtml(node.reason)}</span></td>
+         <td><span class="reason-text" title="${escapeHtml(node.reason)}">${escapeHtml(getReasonPreview(node.reason))}</span></td>
        </tr>
-     `,
+      `,
     )
     .join("");
 
@@ -1124,7 +1132,7 @@ export function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection
           updatedAt.textContent = formatBrowserTime(date);
           var localTimeText = "Local timezone: " + formatBrowserTime(date);
           var utcTimeText = "UTC timezone: " + formatUtcTime(date);
-          updatedAt.title = localTimeText + "\n" + utcTimeText;
+           updatedAt.title = localTimeText + "\\n" + utcTimeText;
 
           var updatedAtMeta = document.getElementById("updated-at-meta");
           if (updatedAtMeta) {
@@ -1145,7 +1153,7 @@ export function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection
 
             var localTimeText = "Local timezone: " + formatBrowserTime(parsed);
             var utcTimeText = "UTC timezone: " + formatUtcTime(parsed);
-            element.title = localTimeText + "\n" + utcTimeText;
+            element.title = localTimeText + "\\n" + utcTimeText;
 
             var meta = element.querySelector(".last-update-meta");
             if (meta) {

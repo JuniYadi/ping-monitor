@@ -185,6 +185,7 @@ test("resolveEmailFromAddress falls back when list is empty", () => {
 });
 
 test("renderNodeStatusPage shows reason as tooltip", () => {
+  const reason = "Latest ping report has reachable packets";
   const html = renderNodeStatusPage(
     [
       {
@@ -193,7 +194,7 @@ test("renderNodeStatusPage shows reason as tooltip", () => {
         status: "connected",
         avgMs: 2.2,
         recordedAt: Date.parse("2026-05-03T11:19:22.994Z"),
-        reason: "Latest ping report has reachable packets",
+        reason,
       },
     ],
     "asc",
@@ -201,4 +202,31 @@ test("renderNodeStatusPage shows reason as tooltip", () => {
 
   expect(html).toContain('class="reason-text"');
   expect(html).toContain('title="Latest ping report has reachable packets"');
+  expect(html).not.toContain(`>${reason}<`);
+});
+
+test("renderNodeStatusPage script contains valid JS", () => {
+  const html = renderNodeStatusPage(
+    [
+      {
+        target: "1.1.1.1",
+        hostname: "node-a",
+        status: "connected",
+        avgMs: 2.5,
+        recordedAt: Date.parse("2026-05-03T11:19:22.994Z"),
+        reason: "",
+      },
+    ],
+    "asc",
+  );
+
+  const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+  expect(scriptMatch).not.toBeNull();
+
+  const script = scriptMatch?.[1] ?? "";
+  expect(script).toContain('"\\n"');
+
+  expect(() => {
+    new Function(script);
+  }).not.toThrow();
 });
