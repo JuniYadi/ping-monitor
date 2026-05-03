@@ -1,11 +1,11 @@
 # API
 
-```txt
+```bash
 bun install
 bun run dev
 ```
 
-```txt
+```bash
 bun run deploy
 ```
 
@@ -87,55 +87,22 @@ Successful responses return `ok: true` and may include `messageId`; failures ret
 
 ### D1 migration
 
-Apply schema in local Cloudflare D1:
+Run each migration as a single line (`--local` for local, `--remote` for production):
 
-```txt
+- Local Migration (local D1 instance, no auth needed):
+
+```bash
 bunx wrangler d1 execute PING_DB --local --file ./migrations/0001_init.sql
-```
-
-For production D1, run the same migration without `--local` after creating/binding your DB in Wrangler:
-
-```txt
-bunx wrangler d1 execute PING_DB --file ./migrations/0001_init.sql
-```
-
-Apply source index migration when needed:
-
-```txt
 bunx wrangler d1 execute PING_DB --local --file ./migrations/0002_source_index.sql
-```
-
-For production with source-based indexing:
-
-```txt
-bunx wrangler d1 execute PING_DB --file ./migrations/0002_source_index.sql
-```
-
-Apply per-node health migration:
-
-```txt
 bunx wrangler d1 execute PING_DB --local --file ./migrations/0003_node_health.sql
 ```
 
-For production:
+- Production Migration (Cloudflare D1, requires auth):
 
-```txt
-bunx wrangler d1 execute PING_DB --file ./migrations/0003_node_health.sql
-```
-
-Apply node-health status duration migration:
-
-```txt
-bunx wrangler d1 execute PING_DB --local --file ./migrations/0004_node_health_status_since.sql
-```
-
-For production:
-
-```txt
-bunx wrangler d1 execute PING_DB --file ./migrations/0004_node_health_status_since.sql
-```
+```bash
+bunx wrangler d1 execute PING_DB --remote --file ./migrations/0001_init.sql
+bunx wrangler d1 execute PING_DB --remote --file ./migrations/0002_source_index.sql
+bunx wrangler d1 execute PING_DB --remote --file ./migrations/0003_node_health.sql
+``` 
 
 If this is an existing deployment, run migration once before you send traffic so schema is ready.
-
-`api/migrations/0001_init.sql` is the source of truth for schema migrations.
-`ensureSchema` is removed from runtime. API routes now fail fast if required tables are missing, so migrations must be applied before traffic starts.
