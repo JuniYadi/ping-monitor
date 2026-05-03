@@ -55,6 +55,40 @@ For local runs, export the same vars before starting the worker (or in `bun run 
 
 - Cron is configured for every minute in `wrangler.jsonc` with a 75-second staleness window, so if no `POST /ping` arrives for ~75 seconds, health is marked as down.
 
+## Email worker test endpoint
+
+- `GET /test/email` and `POST /test/email` send a fixed ASCII node-status test email to confirm Cloudflare send-email binding is working.
+- Endpoint is behind existing Basic Auth.
+- Configure in `wrangler.jsonc`:
+  - `EMAIL_TEST_RECIPIENT`: destination email for the test send
+  - `EMAIL_FROM_ADDRESS`: sender address used by the test message; if set with comma-separated addresses, only the first valid value is used.
+  - `EMAIL_TEST_NODE_STATUS` (optional): `up` or `down` to force template style. Defaults to `up`.
+
+Example body (NODE UP):
+
+```txt
++===============================================================+
+|                     PING MONITOR ALERT                        |
++===============================================================+
+| Event       : NODE UP                                         |
+| Node        : api-node-01                                   |
+| Source      : ping-monitor@network-internal.hugeshop.com      |
+| Target      : network-internal.hugeshop.com                 |
+| Status      : connected                                     |
+| Recorded At (ISO)    : 2026-05-03T01:02:03.000Z           |
+| Recorded At (Sydney) : Sunday 3 May 2026 at 11:02:03 AEST    |
+| Packet Loss : 0                                           |
+| Latency ms  : min/avg/max = -/-/- |
+| Std Dev     : -                                          |
++---------------------------------------------------------------+
+| Reason      : Test trigger from /test/email                  |
+| Notes       : Heartbeat received and network reachable.     |
+| Action      : No action required.                         |
++===============================================================+
+```
+
+Successful responses return `ok: true` and may include `messageId`; failures return `ok: false` and error details.
+
 ### D1 migration
 
 Apply schema in local Cloudflare D1:
