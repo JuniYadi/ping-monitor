@@ -56,6 +56,7 @@ type NodeConnectRow = Omit<PingRow, "id">;
 
 type NodeConnectResponse = {
   target: string;
+  hostname: string;
   status: "connected" | "disconnected";
   recordedAt: number;
   transmitted: number;
@@ -76,6 +77,7 @@ type D1QueryResult<T> = { results: T[] };
 type D1ExecuteResult = { success: boolean; meta?: { last_row_id?: number } };
 
 type D1TableInfoRow = { name: string };
+type D1IndexInfoRow = { name: string };
 
 type D1PreparedStatement = {
   all: <T>() => Promise<D1QueryResult<T>>;
@@ -127,6 +129,9 @@ export function getBasicAuthCredentials(env: BasicAuthSource): BasicAuthCredenti
 }
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
+
+const UNKNOWN_HOSTNAME = "unknown";
+const SOURCE_INDEX_NAME = "idx_ping_records_source_recorded_at";
 
 const REQUIRED_TABLES = ["ping_records", "network_health"] as const;
 
@@ -314,6 +319,16 @@ async function assertSchema(db: CloudflareBindings["PING_DB"]): Promise<void> {
       'Schema out of date: ping_records is missing required column "source_meta". Run migration 0001_init.sql.',
     );
   }
+
+  const indexInfo = await db.prepare("PRAGMA index_list(ping_records)").all<D1IndexInfoRow>();
+  const hasSourceIndex = indexInfo.results.some(
+    (index) => index.name === SOURCE_INDEX_NAME,
+  );
+  if (!hasSourceIndex) {
+    throw new Error(
+      `Schema optimization missing: ping_records is missing index "${SOURCE_INDEX_NAME}". Run migration 0002_source_index.sql.`,
+    );
+  }
 }
 
 function isValidSummary(summary: PingSummary): boolean {
@@ -389,7 +404,7 @@ async function getLatestApiPingAt(db: CloudflareBindings["PING_DB"]): Promise<nu
     .prepare(
       `SELECT recorded_at
        FROM ping_records
-       WHERE source = 'api'
+       WHERE source != '__cron__'
        ORDER BY recorded_at DESC
        LIMIT 1`,
     )
@@ -403,7 +418,7 @@ async function getLatestApiPingPacketLoss(db: CloudflareBindings["PING_DB"]): Pr
     .prepare(
       `SELECT packet_loss_percent
        FROM ping_records
-       WHERE source = 'api'
+       WHERE source != '__cron__'
        ORDER BY recorded_at DESC
        LIMIT 1`,
     )
@@ -419,11 +434,15 @@ async function getCurrentHealth(db: CloudflareBindings["PING_DB"]): Promise<Heal
 }
 
 function buildNodeConnection(row: NodeConnectRow, now: number): NodeConnectResponse {
+  const sourceMeta = parseSourceMetaFromStored(row.source_meta);
+  const hostname = sourceMeta?.hostname ?? row.source ?? UNKNOWN_HOSTNAME;
+
   const isConnected =
     row.packet_loss_percent < 100 && now - row.recorded_at < STALE_WINDOW_MS;
 
   return {
     target: row.target,
+    hostname,
     status: isConnected ? "connected" : "disconnected",
     recordedAt: row.recorded_at,
     transmitted: row.transmitted,
@@ -436,7 +455,7 @@ function buildNodeConnection(row: NodeConnectRow, now: number): NodeConnectRespo
     source: row.source,
     timeoutMs: row.timeout_ms,
     note: row.note,
-    sourceMeta: parseSourceMetaFromStored(row.source_meta),
+    sourceMeta,
     reason: isConnected ? "Latest ping report has reachable packets" : "Down or timed out",
   };
 }
@@ -447,20 +466,222 @@ async function getLatestApiNodes(db: CloudflareBindings["PING_DB"]): Promise<Nod
       `SELECT *
        FROM ping_records
        WHERE id IN (
-         SELECT MAX(id)
-         FROM ping_records
-         WHERE source = 'api'
-           AND target NOT LIKE '__cron__'
-         GROUP BY target
-       )
-       ORDER BY target ASC`,
+        SELECT MAX(id)
+          FROM ping_records
+          WHERE source != '__cron__'
+          GROUP BY source
+        )
+       ORDER BY recorded_at DESC`,
     )
     .all<NodeConnectRow>();
 
   return rows.results;
 }
 
-app.get("/", (c: any) => c.text("Hello Hono!"));
+function toRelativeTime(epochMs: number | null): string {
+  if (!epochMs) {
+    return "-";
+  }
+
+  const ageMs = Date.now() - epochMs;
+  if (ageMs < 0) {
+    return "-";
+  }
+
+  const seconds = Math.floor(ageMs / 1000);
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function formatLatency(node: NodeConnectResponse): string {
+  if (node.packetLossPercent >= 100) {
+    return "-";
+  }
+
+  if (Number.isNaN(node.avgMs)) {
+    return "-";
+  }
+
+  return `${node.avgMs.toFixed(1)} ms`;
+}
+
+function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
+  const rows = nodes
+    .map(
+      (node) => `
+      <tr class="${node.status === "connected" ? "online" : "offline"}">
+        <td>${node.target}</td>
+        <td>${node.hostname}</td>
+        <td>${node.status}</td>
+        <td>${formatLatency(node)}</td>
+        <td>${toRelativeTime(node.recordedAt)}</td>
+        <td>${node.source}</td>
+        <td>${node.reason}</td>
+      </tr>
+    `,
+    )
+    .join("");
+
+  const tableRows = rows || `
+    <tr>
+      <td colspan="7">No node data available yet.</td>
+    </tr>
+  `;
+
+  const updatedAt = new Date().toLocaleString();
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Node Status</title>
+    <style>
+      :root {
+        --bg: #f2f5fb;
+        --text: #111827;
+        --muted: #6b7280;
+        --line: #d9e0ee;
+        --card: #ffffff;
+        --ok: #047857;
+        --bad: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        min-height: 100vh;
+        font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #f9fbff, var(--bg));
+        color: var(--text);
+      }
+
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--card);
+        box-shadow: 0 14px 26px rgba(30, 41, 59, 0.08);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      thead {
+        background: #f8fafc;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.94rem;
+      }
+
+      th {
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.74rem;
+      }
+
+      .online td:nth-child(3) {
+        color: var(--ok);
+        font-weight: 600;
+      }
+
+      .offline td:nth-child(3) {
+        color: var(--bad);
+        font-weight: 600;
+      }
+
+      .meta {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      td:last-child {
+        color: var(--muted);
+        max-width: 260px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Node Status</h1>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Target</th>
+              <th>Hostname</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Last Update</th>
+              <th>Source</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div class="meta">Updated: ${updatedAt}</div>
+    </div>
+  </body>
+</html>`;
+}
+
+async function renderNodeJson(db: CloudflareBindings["PING_DB"]): Promise<{ generatedAt: number; total: number; nodes: NodeConnectResponse[] }>
+  {
+    const now = Date.now();
+    const nodesRows = await getLatestApiNodes(db);
+    const nodes = nodesRows.map((row) => buildNodeConnection(row, now));
+
+    return {
+      generatedAt: now,
+      total: nodes.length,
+      nodes,
+    };
+  }
+
+app.get("/", async (c: any) => {
+  const db = c.env.PING_DB;
+  await assertSchema(db);
+
+  const response = await renderNodeJson(db);
+
+  return c.html(renderNodeStatusPage(response.nodes));
+});
 
 app.get("/status", async (c: any) => {
   const db = c.env.PING_DB;
@@ -478,14 +699,17 @@ app.get("/ping", async (c: any) => {
   const db = c.env.PING_DB;
   await assertSchema(db);
 
-  const now = Date.now();
-  const nodes = await getLatestApiNodes(db);
+  const response = await renderNodeJson(db);
 
-  return c.json({
-    generatedAt: now,
-    total: nodes.length,
-    nodes: nodes.map((node) => buildNodeConnection(node, now)),
-  });
+  return c.json(response);
+});
+
+app.get("/nodes", async (c: any) => {
+  const db = c.env.PING_DB;
+  await assertSchema(db);
+
+  const response = await renderNodeJson(db);
+  return c.json(response);
 });
 
 app.post("/ping", async (c: any) => {
@@ -512,6 +736,7 @@ app.post("/ping", async (c: any) => {
   }
 
   const finalTarget = summary.target || target || "unknown";
+  const source = sourceMeta?.hostname ?? UNKNOWN_HOSTNAME;
 
   const rowId = await insertPingRecord(db, {
     target: finalTarget,
@@ -519,7 +744,7 @@ app.post("/ping", async (c: any) => {
       ...summary,
       target: finalTarget,
     },
-    source: "api",
+    source,
     timeoutMs: null,
     note,
     sourceMeta,
@@ -539,6 +764,7 @@ app.post("/ping", async (c: any) => {
     ok: true,
     id: rowId,
     target: finalTarget,
+    source,
     recordedAt: now,
     summary,
     sourceMeta,
@@ -569,7 +795,7 @@ async function checkNetworkHealth(env: CloudflareBindings): Promise<void> {
       await insertPingRecord(db, {
         target: "__cron__",
         summary: fallbackTimeoutSummary("__cron__"),
-        source: "cron",
+        source: "__cron__",
         timeoutMs: STALE_WINDOW_MS,
         note: "Network deemed down (no POST /ping within 75s)",
         sourceMeta: null,

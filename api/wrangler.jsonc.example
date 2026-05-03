@@ -12,7 +12,7 @@
     {
       "binding": "PING_DB",
       "database_name": "ping-monitor",
-      "database_id": "c2cdf666-ce88-4e70-9792-971c1ca22430"
+      "database_id": "YOUR_DB_ID"
     }
   ]
   // "compatibility_flags": [

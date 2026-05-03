@@ -42,10 +42,12 @@ For local runs, export the same vars before starting the worker (or in `bun run 
     - `ipV4s: string[]`
     - `primaryIpV4: string | null`
   - `target` can be provided at either top-level or inside `summary`.
+  - `source` is derived from `sourceMeta.hostname` and identifies the sender node.
   - Request no longer accepts raw ping output.
 
-- `GET /ping` now returns each monitored node with latest ping status:
-  - one row per node target (latest API record)
+- `GET /ping` and `GET /nodes` now return each monitored node with latest ping status:
+  - one row per posting node (`source`, derived from hostname)
+  - includes a `hostname` field for easy node-level identity
   - `status` is `connected` or `disconnected`
   - includes latest metrics, timestamps, and parsed `sourceMeta` for node identity
 
@@ -65,6 +67,18 @@ For production D1, run the same migration without `--local` after creating/bindi
 
 ```txt
 bunx wrangler d1 execute PING_DB --file ./migrations/0001_init.sql
+```
+
+Apply source index migration when needed:
+
+```txt
+bunx wrangler d1 execute PING_DB --local --file ./migrations/0002_source_index.sql
+```
+
+For production with source-based indexing:
+
+```txt
+bunx wrangler d1 execute PING_DB --file ./migrations/0002_source_index.sql
 ```
 
 If this is an existing deployment, run migration once before you send traffic so schema is ready.

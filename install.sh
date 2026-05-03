@@ -188,11 +188,18 @@ EOF
 install_linux() {
   local service_dir
   local service_path
+  local timer_path
 
   service_dir="${HOME}/.config/systemd/user"
   service_path="${service_dir}/ping-monitor.service"
+  timer_path="${service_dir}/ping-monitor.timer"
 
   mkdir -p "${service_dir}"
+
+  # Replace any previous installation (service/timer from older versions).
+  systemctl --user disable --now ping-monitor.service ping-monitor.timer 2>/dev/null || true
+  systemctl --user stop ping-monitor.service ping-monitor.timer 2>/dev/null || true
+
   cat <<EOF >"${service_path}"
 [Unit]
 Description=Ping Monitor Service
@@ -200,20 +207,28 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 EnvironmentFile=${ENV_FILE}
 ExecStart=${RUNNER_PATH}
-Restart=always
-RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 [Install]
 WantedBy=default.target
 EOF
 
+  cat <<EOF >"${timer_path}"
+[Unit]
+Description=Run ping-monitor every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
   systemctl --user daemon-reload
-  systemctl --user enable --now ping-monitor.service
+  systemctl --user enable --now ping-monitor.timer
 }
 
 escape_xml() {
@@ -254,11 +269,8 @@ install_macos() {
       <string>${RUNNER_PATH}</string>
     </array>
 
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <true/>
+    <key>StartInterval</key>
+    <integer>60</integer>
 
     <key>EnvironmentVariables</key>
     <dict>
