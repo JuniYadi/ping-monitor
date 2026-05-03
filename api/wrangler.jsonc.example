@@ -3,6 +3,29 @@
   "name": "ping-monitor-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-03",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "YOUR_CUSTOM_DOMAIN",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "BASIC_AUTH_PASSWORD": "YOUR_BASIC_AUTH_PASSWORD",
+    "BASIC_AUTH_USERNAME": "YOUR_BASIC_AUTH_USERNAME",
+    "EMAIL_TEST_RECIPIENT": "recipient1@example.com,recipient2@example.com",
+    "EMAIL_FROM_ADDRESS": "no-reply@example.com"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL_ALERT",
+      "allowed_destination_addresses": [
+        "recipient1@example.com",
+        "recipient2@example.com"
+      ]
+    }
+  ],
   "triggers": {
     "crons": [
       "*/1 * * * *"
@@ -12,9 +35,13 @@
     {
       "binding": "PING_DB",
       "database_name": "ping-monitor",
-      "database_id": "YOUR_DB_ID"
+      "database_id": "YOUR_D1_DATABASE_ID"
     }
-  ]
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
   // "compatibility_flags": [
   //   "nodejs_compat"
   // ],
