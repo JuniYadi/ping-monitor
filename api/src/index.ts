@@ -49,6 +49,7 @@ type EmailTestMessage = {
   to: string;
   subject: string;
   text: string;
+  html: string;
 };
 
 type EmailAlertBinding = {
@@ -68,6 +69,15 @@ type HealthRow = {
   status: string;
   last_seen_ping: number | null;
   last_checked_at: number;
+  reason: string | null;
+};
+
+type NodeHealthRow = {
+  node_id: string;
+  status: string;
+  last_seen_ping: number | null;
+  last_checked_at: number;
+  status_since: number | null;
   reason: string | null;
 };
 
@@ -156,7 +166,7 @@ const app = new Hono<{ Bindings: CloudflareBindings }>();
 const UNKNOWN_HOSTNAME = "unknown";
 const SOURCE_INDEX_NAME = "idx_ping_records_source_recorded_at";
 
-const REQUIRED_TABLES = ["ping_records", "network_health"] as const;
+const REQUIRED_TABLES = ["ping_records", "network_health", "node_health"] as const;
 
 app.use("*", async (c, next) => {
   const credentials = getBasicAuthCredentials(c.env);
@@ -212,6 +222,18 @@ export function resolveEmailFromAddress(reqUrl: string, env: EmailEnv): string {
   return `ping-monitor@${hostname}`;
 }
 
+function resolveEmailFromHost(hostname: string, env: EmailEnv): string {
+  const configured = isFiniteText(env.EMAIL_FROM_ADDRESS) ?? resolveProcessEnv("EMAIL_FROM_ADDRESS");
+  if (configured) {
+    const addresses = parseCommaSeparatedAddresses(configured);
+    if (addresses.length > 0) {
+      return addresses[0];
+    }
+  }
+
+  return `ping-monitor@${hostname || "local.test"}`;
+}
+
 function resolveEmailRecipient(env: EmailEnv): string | null {
   return isFiniteText(env.EMAIL_TEST_RECIPIENT) ?? resolveProcessEnv("EMAIL_TEST_RECIPIENT");
 }
@@ -245,7 +267,7 @@ function formatLatencyValue(value: number | null): string {
   return Number.isFinite(value) ? value.toFixed(1) : "-";
 }
 
-function buildNodeStatusTemplate(params: {
+function buildNodeStatusTextTemplate(params: {
   status: TestNodeStatus;
   hostname: string;
   source: string;
@@ -271,26 +293,80 @@ function buildNodeStatusTemplate(params: {
   const sydney = toSydneyTime(params.recordedAt);
 
   return [
-    "+===============================================================+",
-    "|                     PING MONITOR ALERT                        |",
-    "+===============================================================+",
-    `| Event       : ${title.padEnd(49)} |`,
-    `| Node        : ${params.hostname.padEnd(49)} |`,
-    `| Source      : ${params.source.padEnd(49)} |`,
-    `| Target      : ${params.target.padEnd(49)} |`,
-    `| Status      : ${status.padEnd(49)} |`,
-    `| Recorded At (ISO)    : ${params.recordedAt.padEnd(34)} |`,
-    `| Recorded At (Sydney) : ${sydney.padEnd(34)} |`,
-    `| Packet Loss : ${String(params.packetLossPercent).padEnd(49)} |`,
-    `| Latency ms  : min/avg/max = ${formatLatencyValue(params.minMs)}/${formatLatencyValue(params.avgMs)}/${formatLatencyValue(params.maxMs)}` +
-    ` |`,
-    `| Std Dev     : ${formatLatencyValue(params.stddevMs).padEnd(49)} |`,
-    "+---------------------------------------------------------------+",
-    `| Reason      : ${reason.slice(0, 49).padEnd(49)} |`,
-    `| Notes       : ${notes.slice(0, 49).padEnd(49)} |`,
-    `| Action      : ${action.slice(0, 49).padEnd(49)} |`,
-    "+===============================================================+",
+    "PING MONITOR ALERT",
+    `Event - ${title}`,
+    `Node - ${params.hostname}`,
+    `Source - ${params.source}`,
+    `Target - ${params.target}`,
+    `Status - ${status}`,
+    `Recorded At (ISO) - ${params.recordedAt}`,
+    `Recorded At (Sydney) - ${sydney}`,
+    `Packet Loss - ${params.packetLossPercent}`,
+    `Latency ms - min/avg/max = ${formatLatencyValue(params.minMs)}/${formatLatencyValue(params.avgMs)}/${formatLatencyValue(params.maxMs)}`,
+    `Std Dev - ${formatLatencyValue(params.stddevMs)}`,
+    `Reason - ${reason}`,
+    `Notes - ${notes}`,
+    `Action - ${action}`,
   ].join("\n");
+}
+
+function buildNodeStatusHtmlTemplate(params: {
+  status: TestNodeStatus;
+  hostname: string;
+  source: string;
+  target: string;
+  packetLossPercent: number;
+  minMs: number | null;
+  avgMs: number | null;
+  maxMs: number | null;
+  stddevMs: number | null;
+  reason: string;
+  recordedAt: string;
+}): string {
+  const isUp = params.status === "up";
+  const title = isUp ? "NODE UP" : "NODE DOWN";
+  const status = isUp ? "connected" : "disconnected";
+  const action = isUp
+    ? "No action required."
+    : "Please verify node process/network path and check the next health check.";
+  const notes = isUp
+    ? "Heartbeat received and network reachable."
+    : "No healthy ping within freshness window.";
+  const reason = params.reason || (isUp ? "Heartbeat received" : "No healthy ping within freshness window");
+  const sydney = toSydneyTime(params.recordedAt);
+  const indicatorColor = isUp ? "#16a34a" : "#dc2626";
+  const indicatorLabel = isUp ? "GREEN (UP)" : "RED (DOWN)";
+
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:16px;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-collapse:collapse;">
+      <tr>
+        <td colspan="2" style="padding:14px 16px;background:#0f172a;color:#ffffff;font-size:18px;font-weight:700;">PING MONITOR ALERT</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;width:220px;">Status Indicator</td>
+        <td style="padding:10px 16px;border-top:1px solid #e2e8f0;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${indicatorColor};margin-right:8px;vertical-align:middle;"></span>
+          <span style="vertical-align:middle;">${indicatorLabel}</span>
+        </td>
+      </tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Event</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${title}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Node</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${params.hostname}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Source</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${params.source}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Target</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${params.target}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Status</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${status}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Recorded At (ISO)</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${params.recordedAt}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Recorded At (Sydney)</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${sydney}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Packet Loss</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${params.packetLossPercent}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Latency ms</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">min/avg/max = ${formatLatencyValue(params.minMs)}/${formatLatencyValue(params.avgMs)}/${formatLatencyValue(params.maxMs)}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Std Dev</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${formatLatencyValue(params.stddevMs)}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Reason</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${reason}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Notes</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${notes}</td></tr>
+      <tr><td style="padding:10px 16px;border-top:1px solid #e2e8f0;font-weight:600;">Action</td><td style="padding:10px 16px;border-top:1px solid #e2e8f0;">${action}</td></tr>
+    </table>
+  </body>
+</html>`;
 }
 
 export function buildTestEmailMessage(params: {
@@ -309,7 +385,20 @@ export function buildTestEmailMessage(params: {
   const sentAt = params.sentAt ?? new Date().toISOString();
 
   const status = params.status ?? "up";
-  const template = buildNodeStatusTemplate({
+  const template = buildNodeStatusTextTemplate({
+    status,
+    hostname: params.host,
+    source: params.from,
+    target: params.host,
+    packetLossPercent: params.packetLossPercent ?? 0,
+    minMs: params.minMs ?? null,
+    avgMs: params.avgMs ?? null,
+    maxMs: params.maxMs ?? null,
+    stddevMs: params.stddevMs ?? null,
+    reason: params.reason ?? "Test trigger from /test/email",
+    recordedAt: sentAt,
+  });
+  const html = buildNodeStatusHtmlTemplate({
     status,
     hostname: params.host,
     source: params.from,
@@ -326,9 +415,46 @@ export function buildTestEmailMessage(params: {
   return {
     from: params.from,
     to: params.to,
-    subject: `Ping monitor email test ${status.toUpperCase()} (${params.host})`,
+    subject: `Ping monitor email test ${status.toUpperCase()} (${params.from})`,
     text: template,
+    html,
   };
+}
+
+async function sendNodeStatusNotification(
+  env: CloudflareBindings,
+  params: {
+    nodeId: string;
+    target: string;
+    status: TestNodeStatus;
+    reason: string;
+    recordedAtMs: number;
+    packetLossPercent: number;
+    downDurationMs: number;
+  },
+): Promise<void> {
+  const recipient = resolveEmailRecipient(env);
+  if (!recipient) {
+    return;
+  }
+
+  const from = resolveEmailFromHost(params.nodeId, env);
+  const payload = buildTestEmailMessage({
+    from,
+    to: recipient,
+    host: params.nodeId,
+    status: params.status,
+    sentAt: new Date(params.recordedAtMs).toISOString(),
+    reason: params.reason,
+    packetLossPercent: params.packetLossPercent,
+  });
+  payload.subject = buildNodeTransitionSubject({
+    nodeId: params.nodeId,
+    status: params.status,
+    downDurationMs: params.downDurationMs,
+  });
+
+  await env.EMAIL_ALERT.send(payload);
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -501,6 +627,14 @@ async function assertSchema(db: CloudflareBindings["PING_DB"]): Promise<void> {
       `Schema optimization missing: ping_records is missing index "${SOURCE_INDEX_NAME}". Run migration 0002_source_index.sql.`,
     );
   }
+
+  const nodeHealthTableInfo = await db.prepare("PRAGMA table_info(node_health)").all<D1TableInfoRow>();
+  const hasStatusSince = nodeHealthTableInfo.results.some((column) => column.name === "status_since");
+  if (!hasStatusSince) {
+    throw new Error(
+      'Schema out of date: node_health is missing required column "status_since". Run migration 0004_node_health_status_since.sql.',
+    );
+  }
 }
 
 function isValidSummary(summary: PingSummary): boolean {
@@ -571,6 +705,30 @@ async function upsertHealth(
     .run();
 }
 
+async function upsertNodeHealth(
+  db: CloudflareBindings["PING_DB"],
+  nodeId: string,
+  status: "up" | "down",
+  lastSeenPing: number | null,
+  checkedAt: number,
+  statusSince: number,
+  reason: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO node_health (node_id, status, last_seen_ping, last_checked_at, status_since, reason)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(node_id) DO UPDATE SET
+         status = excluded.status,
+         last_seen_ping = excluded.last_seen_ping,
+         last_checked_at = excluded.last_checked_at,
+         status_since = excluded.status_since,
+         reason = excluded.reason`,
+    )
+    .bind(nodeId, status, lastSeenPing, checkedAt, statusSince, reason)
+    .run();
+}
+
 async function getLatestApiPingAt(db: CloudflareBindings["PING_DB"]): Promise<number | null> {
   const result = await db
     .prepare(
@@ -603,6 +761,61 @@ async function getCurrentHealth(db: CloudflareBindings["PING_DB"]): Promise<Heal
   return await db
     .prepare(`SELECT * FROM network_health WHERE id = 1`)
     .first<HealthRow>();
+}
+
+async function getNodeHealth(db: CloudflareBindings["PING_DB"], nodeId: string): Promise<NodeHealthRow | null> {
+  return await db
+    .prepare(`SELECT * FROM node_health WHERE node_id = ?`)
+    .bind(nodeId)
+    .first<NodeHealthRow>();
+}
+
+async function getAllNodeHealth(db: CloudflareBindings["PING_DB"]): Promise<NodeHealthRow[]> {
+  const rows = await db
+    .prepare(`SELECT * FROM node_health`)
+    .all<NodeHealthRow>();
+
+  return rows.results;
+}
+
+export function computeStalenessStatus(
+  lastSeenPing: number | null,
+  now: number,
+  staleWindowMs: number,
+): "up" | "down" {
+  if (!lastSeenPing) {
+    return "down";
+  }
+
+  return now - lastSeenPing >= staleWindowMs ? "down" : "up";
+}
+
+export function formatDurationShort(durationMs: number): string {
+  const totalMinutes = Math.max(0, Math.floor(durationMs / 60_000));
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+
+  return `${hours}h ${minutes}m`;
+}
+
+export function buildNodeTransitionSubject(params: {
+  nodeId: string;
+  status: TestNodeStatus;
+  downDurationMs: number;
+}): string {
+  const duration = formatDurationShort(params.downDurationMs);
+  if (params.status === "down") {
+    return `NODE DOWN: ${params.nodeId} (Down for ${duration})`;
+  }
+
+  return `NODE UP: ${params.nodeId} (Up after ${duration} down)`;
 }
 
 function buildNodeConnection(row: NodeConnectRow, now: number): NodeConnectResponse {
@@ -1085,7 +1298,28 @@ app.post("/ping", async (c: any) => {
       ? "ping lost all packets"
       : "post received";
 
+  const currentNodeHealth = await getNodeHealth(db, source);
+  const isTransition = currentNodeHealth?.status !== networkStatus;
+  const statusSince = isTransition ? now : (currentNodeHealth?.status_since ?? now);
+
+  await upsertNodeHealth(db, source, networkStatus, now, now, statusSince, healthReason);
   await upsertHealth(db, networkStatus, now, now, healthReason);
+
+  if (isTransition) {
+    const downDurationMs = networkStatus === "down"
+      ? Math.max(0, now - now)
+      : Math.max(0, now - (currentNodeHealth?.status_since ?? now));
+
+    await sendNodeStatusNotification(c.env, {
+      nodeId: source,
+      target: finalTarget,
+      status: networkStatus,
+      reason: healthReason,
+      recordedAtMs: now,
+      packetLossPercent: summary.packetLossPercent,
+      downDurationMs,
+    });
+  }
 
   return c.json({
     ok: true,
@@ -1103,42 +1337,69 @@ async function checkNetworkHealth(env: CloudflareBindings): Promise<void> {
   await assertSchema(db);
 
   const now = Date.now();
-  const lastPingAt = await getLatestApiPingAt(db);
-  const lastPacketLoss = await getLatestApiPingPacketLoss(db);
-  const isDown = !lastPingAt || now - lastPingAt >= STALE_WINDOW_MS;
+  const nodes = await getAllNodeHealth(db);
 
-  const currentHealth = await getCurrentHealth(db);
-  if (isDown) {
-    const shouldRecordDown = currentHealth?.status !== "down";
-    await upsertHealth(
-      db,
-      "down",
-      lastPingAt,
-      now,
-      lastPingAt ? "No /ping since 75 seconds" : "No /ping records yet",
-    );
+  for (const node of nodes) {
+    const status = computeStalenessStatus(node.last_seen_ping, now, STALE_WINDOW_MS);
+    const reason =
+      status === "down"
+        ? node.last_seen_ping
+          ? `No /ping from ${node.node_id} since 75 seconds`
+          : `No /ping records yet for ${node.node_id}`
+        : "Ping received from API";
 
-    if (shouldRecordDown) {
-      await insertPingRecord(db, {
-        target: "__cron__",
-        summary: fallbackTimeoutSummary("__cron__"),
-        source: "__cron__",
-        timeoutMs: STALE_WINDOW_MS,
-        note: "Network deemed down (no POST /ping within 75s)",
-        sourceMeta: null,
+    if (node.status !== status) {
+      const statusSince = now;
+      await upsertNodeHealth(db, node.node_id, status, node.last_seen_ping, now, statusSince, reason);
+
+      const downDurationMs = status === "down"
+        ? Math.max(0, now - (node.last_seen_ping ?? now))
+        : Math.max(0, now - (node.status_since ?? now));
+
+      await sendNodeStatusNotification(env, {
+        nodeId: node.node_id,
+        target: node.node_id,
+        status,
+        reason,
+        recordedAtMs: now,
+        packetLossPercent: status === "down" ? 100 : 0,
+        downDurationMs,
       });
+
+      if (status === "down") {
+        await insertPingRecord(db, {
+          target: "__cron__",
+          summary: fallbackTimeoutSummary("__cron__"),
+          source: "__cron__",
+          timeoutMs: STALE_WINDOW_MS,
+          note: `Node ${node.node_id} deemed down (no POST /ping within 75s)`,
+          sourceMeta: null,
+        });
+      }
+      continue;
     }
 
-    return;
+    await upsertNodeHealth(
+      db,
+      node.node_id,
+      status,
+      node.last_seen_ping,
+      now,
+      node.status_since ?? now,
+      reason,
+    );
   }
 
-  const latestApiDown = lastPacketLoss !== null && lastPacketLoss >= 100;
-  const statusFromPing: "up" | "down" = latestApiDown ? "down" : "up";
-  const reasonFromPing = latestApiDown ? "Latest /ping report shows full packet loss" : "Ping received from API";
+  const downNodes = nodes.filter((node) => computeStalenessStatus(node.last_seen_ping, now, STALE_WINDOW_MS) === "down");
+  const networkStatus: "up" | "down" = downNodes.length > 0 ? "down" : "up";
+  const latestPingAt = nodes.length > 0
+    ? Math.max(...nodes.map((node) => node.last_seen_ping ?? 0))
+    : null;
+  const reason = downNodes.length > 0
+    ? `${downNodes.length} node(s) stale`
+    : "All nodes reporting within freshness window";
 
-  if (currentHealth?.status !== statusFromPing) {
-    await upsertHealth(db, statusFromPing, lastPingAt, now, reasonFromPing);
-  }
+  await upsertHealth(db, networkStatus, latestPingAt && latestPingAt > 0 ? latestPingAt : null, now, reason);
 }
 
 const worker = {
