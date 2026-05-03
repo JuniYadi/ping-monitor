@@ -3,6 +3,7 @@ import { test, expect } from "bun:test";
 import {
   buildTestEmailMessage,
   getBasicAuthCredentials,
+  renderNodeStatusPage,
   resolveEmailFromAddress,
 } from "./index";
 
@@ -103,4 +104,23 @@ test("resolveEmailFromAddress falls back when list is empty", () => {
   );
 
   expect(from).toBe("ping-monitor@network-internal.hugeshop.com");
+});
+
+test("renderNodeStatusPage shows reason as tooltip", () => {
+  const html = renderNodeStatusPage(
+    [
+      {
+        target: "8.8.8.8",
+        hostname: "node-a",
+        status: "connected",
+        avgMs: 2.2,
+        recordedAt: Date.parse("2026-05-03T11:19:22.994Z"),
+        reason: "Latest ping report has reachable packets",
+      },
+    ],
+    "asc",
+  );
+
+  expect(html).toContain('class="reason-text"');
+  expect(html).toContain('title="Latest ping report has reachable packets"');
 });

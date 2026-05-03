@@ -697,7 +697,16 @@ function sortNodesByHostname(nodes: NodeConnectResponse[], direction: HostnameSo
   });
 }
 
-function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: HostnameSortDirection): string {
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: HostnameSortDirection): string {
   const nextSortDirection = sortDirection === "asc" ? "desc" : "asc";
   const sortGlyph = sortDirection === "asc" ? "&#9650;" : "&#9660;";
   const sortedNodes = sortNodesByHostname(nodes, sortDirection);
@@ -710,10 +719,10 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: Hostn
         <td>${node.hostname}</td>
         <td>${node.status}</td>
         <td>${formatLatency(node)}</td>
-        <td><span class="last-update" data-recorded-at="${new Date(node.recordedAt).toISOString()}">${toRelativeTime(node.recordedAt)}</span></td>
-        <td>${node.reason}</td>
-      </tr>
-    `,
+        <td><span class="last-update" data-recorded-at="${new Date(node.recordedAt).toISOString()}">${toRelativeTime(node.recordedAt)} <span class="last-update-meta" data-utc-time="${new Date(node.recordedAt).toISOString()}">UTC: ${new Date(node.recordedAt).toISOString()}</span></span></td>
+         <td><span class="reason-text" title="${escapeHtml(node.reason)}">${escapeHtml(node.reason)}</span></td>
+       </tr>
+     `,
     )
     .join("");
 
@@ -822,6 +831,11 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: Hostn
         font-size: 0.88rem;
       }
 
+      .last-update-meta {
+        color: var(--muted);
+        font-size: 0.72rem;
+      }
+
       td:last-child {
         color: var(--muted);
         max-width: 260px;
@@ -849,7 +863,7 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: Hostn
           <tbody>${tableRows}</tbody>
         </table>
       </div>
-    <div class="meta">Updated: <span id="updated-at" data-updated-at="${updatedAt}">${new Date(updatedAt).toLocaleString()}</span></div>
+     <div class="meta">Updated: <span id="updated-at" data-updated-at="${updatedAt}">${new Date(updatedAt).toLocaleString()}</span> <span id="updated-at-meta" data-updated-utc="${updatedAt}">UTC: ${updatedAt}</span></div>
       <script>
         (function () {
           function formatBrowserTime(date) {
@@ -895,7 +909,14 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: Hostn
           }
 
           updatedAt.textContent = formatBrowserTime(date);
-          updatedAt.title = "Local timezone: " + formatBrowserTime(date) + "\nUTC timezone: " + formatUtcTime(date);
+          var localTimeText = "Local timezone: " + formatBrowserTime(date);
+          var utcTimeText = "UTC timezone: " + formatUtcTime(date);
+          updatedAt.title = localTimeText + "\n" + utcTimeText;
+
+          var updatedAtMeta = document.getElementById("updated-at-meta");
+          if (updatedAtMeta) {
+            updatedAtMeta.textContent = utcTimeText;
+          }
 
           var lastUpdates = document.querySelectorAll("[data-recorded-at]");
           lastUpdates.forEach(function (element) {
@@ -909,7 +930,14 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: Hostn
               return;
             }
 
-            element.title = "Local timezone: " + formatBrowserTime(parsed) + "\nUTC timezone: " + formatUtcTime(parsed);
+            var localTimeText = "Local timezone: " + formatBrowserTime(parsed);
+            var utcTimeText = "UTC timezone: " + formatUtcTime(parsed);
+            element.title = localTimeText + "\n" + utcTimeText;
+
+            var meta = element.querySelector(".last-update-meta");
+            if (meta) {
+              meta.textContent = localTimeText + " | " + utcTimeText;
+            }
           });
         })();
       </script>
