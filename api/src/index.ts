@@ -44,6 +44,25 @@ type BasicAuthCredentials = {
   password: string;
 };
 
+type EmailTestMessage = {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+};
+
+type EmailAlertBinding = {
+  send: (message: EmailTestMessage) => Promise<{ messageId?: string } | undefined>;
+};
+
+type EmailEnv = {
+  EMAIL_TEST_RECIPIENT?: string;
+  EMAIL_FROM_ADDRESS?: string;
+  EMAIL_TEST_NODE_STATUS?: "up" | "down";
+};
+
+type TestNodeStatus = "up" | "down";
+
 type HealthRow = {
   id: number;
   status: string;
@@ -51,6 +70,8 @@ type HealthRow = {
   last_checked_at: number;
   reason: string | null;
 };
+
+type HostnameSortDirection = "asc" | "desc";
 
 type NodeConnectRow = Omit<PingRow, "id">;
 
@@ -89,11 +110,13 @@ type D1BoundStatement = {
   bind: (...values: Array<number | string | null>) => D1PreparedStatement;
 };
 
-type CloudflareBindings = BasicAuthSource & {
+type CloudflareBindings = BasicAuthSource &
+  EmailEnv & {
   PING_DB: {
     exec: (query: string) => Promise<{ success: boolean }>;
     prepare: (query: string) => D1PreparedStatement & D1BoundStatement;
   };
+  EMAIL_ALERT: EmailAlertBinding;
 };
 
 function resolveProcessEnv(name: string): string | undefined {
@@ -157,6 +180,155 @@ function toText(value: unknown): string | null {
   }
 
   return null;
+}
+
+function isFiniteText(value: unknown): string | null {
+  const text = toText(value);
+  if (!text) {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function parseCommaSeparatedAddresses(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function resolveEmailFromAddress(reqUrl: string, env: EmailEnv): string {
+  const configured = isFiniteText(env.EMAIL_FROM_ADDRESS) ?? resolveProcessEnv("EMAIL_FROM_ADDRESS");
+  if (configured) {
+    const addresses = parseCommaSeparatedAddresses(configured);
+    if (addresses.length > 0) {
+      return addresses[0];
+    }
+  }
+
+  const hostname = new URL(reqUrl).hostname || "local.test";
+  return `ping-monitor@${hostname}`;
+}
+
+function resolveEmailRecipient(env: EmailEnv): string | null {
+  return isFiniteText(env.EMAIL_TEST_RECIPIENT) ?? resolveProcessEnv("EMAIL_TEST_RECIPIENT");
+}
+
+function resolveEmailNodeStatus(env: EmailEnv): TestNodeStatus {
+  const raw = isFiniteText(env.EMAIL_TEST_NODE_STATUS) ?? resolveProcessEnv("EMAIL_TEST_NODE_STATUS");
+  return raw?.toLowerCase() === "down" ? "down" : "up";
+}
+
+function toSydneyTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "invalid timestamp";
+  }
+
+  return new Intl.DateTimeFormat("en-AU", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "Australia/Sydney",
+    timeZoneName: "short",
+    hour12: false,
+  }).format(date);
+}
+
+function formatLatencyValue(value: number | null): string {
+  return Number.isFinite(value) ? value.toFixed(1) : "-";
+}
+
+function buildNodeStatusTemplate(params: {
+  status: TestNodeStatus;
+  hostname: string;
+  source: string;
+  target: string;
+  packetLossPercent: number;
+  minMs: number | null;
+  avgMs: number | null;
+  maxMs: number | null;
+  stddevMs: number | null;
+  reason: string;
+  recordedAt: string;
+}): string {
+  const isUp = params.status === "up";
+  const title = isUp ? "NODE UP" : "NODE DOWN";
+  const status = isUp ? "connected" : "disconnected";
+  const action = isUp
+    ? "No action required."
+    : "Please verify node process/network path and check the next health check.";
+  const notes = isUp
+    ? "Heartbeat received and network reachable."
+    : "No healthy ping within freshness window.";
+  const reason = params.reason || (isUp ? "Heartbeat received" : "No healthy ping within freshness window");
+  const sydney = toSydneyTime(params.recordedAt);
+
+  return [
+    "+===============================================================+",
+    "|                     PING MONITOR ALERT                        |",
+    "+===============================================================+",
+    `| Event       : ${title.padEnd(49)} |`,
+    `| Node        : ${params.hostname.padEnd(49)} |`,
+    `| Source      : ${params.source.padEnd(49)} |`,
+    `| Target      : ${params.target.padEnd(49)} |`,
+    `| Status      : ${status.padEnd(49)} |`,
+    `| Recorded At (ISO)    : ${params.recordedAt.padEnd(34)} |`,
+    `| Recorded At (Sydney) : ${sydney.padEnd(34)} |`,
+    `| Packet Loss : ${String(params.packetLossPercent).padEnd(49)} |`,
+    `| Latency ms  : min/avg/max = ${formatLatencyValue(params.minMs)}/${formatLatencyValue(params.avgMs)}/${formatLatencyValue(params.maxMs)}` +
+    ` |`,
+    `| Std Dev     : ${formatLatencyValue(params.stddevMs).padEnd(49)} |`,
+    "+---------------------------------------------------------------+",
+    `| Reason      : ${reason.slice(0, 49).padEnd(49)} |`,
+    `| Notes       : ${notes.slice(0, 49).padEnd(49)} |`,
+    `| Action      : ${action.slice(0, 49).padEnd(49)} |`,
+    "+===============================================================+",
+  ].join("\n");
+}
+
+export function buildTestEmailMessage(params: {
+  from: string;
+  to: string;
+  host: string;
+  sentAt?: string;
+  status?: TestNodeStatus;
+  packetLossPercent?: number;
+  minMs?: number | null;
+  avgMs?: number | null;
+  maxMs?: number | null;
+  stddevMs?: number | null;
+  reason?: string;
+}): EmailTestMessage {
+  const sentAt = params.sentAt ?? new Date().toISOString();
+
+  const status = params.status ?? "up";
+  const template = buildNodeStatusTemplate({
+    status,
+    hostname: params.host,
+    source: params.from,
+    target: params.host,
+    packetLossPercent: params.packetLossPercent ?? 0,
+    minMs: params.minMs ?? null,
+    avgMs: params.avgMs ?? null,
+    maxMs: params.maxMs ?? null,
+    stddevMs: params.stddevMs ?? null,
+    reason: params.reason ?? "Test trigger from /test/email",
+    recordedAt: sentAt,
+  });
+
+  return {
+    from: params.from,
+    to: params.to,
+    subject: `Ping monitor email test ${status.toUpperCase()} (${params.host})`,
+    text: template,
+  };
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -514,8 +686,23 @@ function formatLatency(node: NodeConnectResponse): string {
   return `${node.avgMs.toFixed(1)} ms`;
 }
 
-function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
-  const rows = nodes
+function getHostnameSortDirection(rawSort: unknown): HostnameSortDirection {
+  return rawSort === "desc" ? "desc" : "asc";
+}
+
+function sortNodesByHostname(nodes: NodeConnectResponse[], direction: HostnameSortDirection): NodeConnectResponse[] {
+  return [...nodes].sort((first, second) => {
+    const delta = first.hostname.localeCompare(second.hostname, undefined, { sensitivity: "base" });
+    return direction === "asc" ? delta : -delta;
+  });
+}
+
+function renderNodeStatusPage(nodes: NodeConnectResponse[], sortDirection: HostnameSortDirection): string {
+  const nextSortDirection = sortDirection === "asc" ? "desc" : "asc";
+  const sortGlyph = sortDirection === "asc" ? "&#9650;" : "&#9660;";
+  const sortedNodes = sortNodesByHostname(nodes, sortDirection);
+
+  const rows = sortedNodes
     .map(
       (node) => `
       <tr class="${node.status === "connected" ? "online" : "offline"}">
@@ -523,8 +710,7 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
         <td>${node.hostname}</td>
         <td>${node.status}</td>
         <td>${formatLatency(node)}</td>
-        <td>${toRelativeTime(node.recordedAt)}</td>
-        <td>${node.source}</td>
+        <td><span class="last-update" data-recorded-at="${new Date(node.recordedAt).toISOString()}">${toRelativeTime(node.recordedAt)}</span></td>
         <td>${node.reason}</td>
       </tr>
     `,
@@ -533,11 +719,11 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
 
   const tableRows = rows || `
     <tr>
-      <td colspan="7">No node data available yet.</td>
+      <td colspan="6">No node data available yet.</td>
     </tr>
   `;
 
-  const updatedAt = new Date().toLocaleString();
+  const updatedAt = new Date().toISOString();
 
   return `<!doctype html>
 <html lang="en">
@@ -611,6 +797,15 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
         font-size: 0.74rem;
       }
 
+      .sortable a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .sortable a:hover {
+        text-decoration: underline;
+      }
+
       .online td:nth-child(3) {
         color: var(--ok);
         font-weight: 600;
@@ -644,19 +839,81 @@ function renderNodeStatusPage(nodes: NodeConnectResponse[]): string {
           <thead>
             <tr>
               <th>Target</th>
-              <th>Hostname</th>
+              <th class="sortable"><a href="/?sort=${nextSortDirection}">Hostname ${sortGlyph}</a></th>
               <th>Status</th>
               <th>Latency</th>
               <th>Last Update</th>
-              <th>Source</th>
               <th>Reason</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
-      <div class="meta">Updated: ${updatedAt}</div>
-    </div>
+    <div class="meta">Updated: <span id="updated-at" data-updated-at="${updatedAt}">${new Date(updatedAt).toLocaleString()}</span></div>
+      <script>
+        (function () {
+          function formatBrowserTime(date) {
+            return date.toLocaleString([], {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZoneName: "short",
+              hour12: false,
+            });
+          }
+
+          function formatUtcTime(date) {
+            return date.toLocaleString([], {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZone: "UTC",
+              timeZoneName: "short",
+              hour12: false,
+            });
+          }
+
+          var updatedAt = document.getElementById("updated-at");
+          if (!updatedAt) {
+            return;
+          }
+
+        var updatedAtValue = updatedAt.getAttribute("data-updated-at");
+        if (!updatedAtValue) {
+          return;
+        }
+
+          var date = new Date(updatedAtValue);
+          if (Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          updatedAt.textContent = formatBrowserTime(date);
+          updatedAt.title = "Local timezone: " + formatBrowserTime(date) + "\nUTC timezone: " + formatUtcTime(date);
+
+          var lastUpdates = document.querySelectorAll("[data-recorded-at]");
+          lastUpdates.forEach(function (element) {
+            var rawTime = element.getAttribute("data-recorded-at");
+            if (!rawTime) {
+              return;
+            }
+
+            var parsed = new Date(rawTime);
+            if (Number.isNaN(parsed.getTime())) {
+              return;
+            }
+
+            element.title = "Local timezone: " + formatBrowserTime(parsed) + "\nUTC timezone: " + formatUtcTime(parsed);
+          });
+        })();
+      </script>
+  </div>
   </body>
 </html>`;
 }
@@ -679,8 +936,9 @@ app.get("/", async (c: any) => {
   await assertSchema(db);
 
   const response = await renderNodeJson(db);
+  const sortDirection = getHostnameSortDirection(c.req.query("sort"));
 
-  return c.html(renderNodeStatusPage(response.nodes));
+  return c.html(renderNodeStatusPage(response.nodes, sortDirection));
 });
 
 app.get("/status", async (c: any) => {
@@ -711,6 +969,47 @@ app.get("/nodes", async (c: any) => {
   const response = await renderNodeJson(db);
   return c.json(response);
 });
+
+async function handleTestEmail(c: any): Promise<Response> {
+  const recipient = resolveEmailRecipient(c.env);
+  if (!recipient) {
+    return c.json({ ok: false, error: "EMAIL_TEST_RECIPIENT is not configured" }, 500);
+  }
+
+  const from = resolveEmailFromAddress(c.req.url, c.env);
+  const host = new URL(c.req.url).hostname || "local.test";
+  const status = resolveEmailNodeStatus(c.env);
+  const payload = buildTestEmailMessage({
+    from,
+    to: recipient,
+    host,
+    status,
+  });
+
+  try {
+    const result = await c.env.EMAIL_ALERT.send(payload);
+    const messageId = isObject(result) ? toText((result as { messageId?: unknown }).messageId) : null;
+
+    return c.json({
+      ok: true,
+      messageId,
+      recipient,
+      from,
+      subject: payload.subject,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    return c.json({
+      ok: false,
+      error: "Failed to send test email",
+      detail: errorMessage,
+    }, 500);
+  }
+}
+
+app.get("/test/email", handleTestEmail);
+app.post("/test/email", handleTestEmail);
 
 app.post("/ping", async (c: any) => {
   const db = c.env.PING_DB;
