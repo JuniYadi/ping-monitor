@@ -110,6 +110,7 @@ test("parseCliOptions accepts --help flag", () => {
   const result = parseCliOptions(["--help"]);
 
   expect(result.help).toBe(true);
+  expect(result.version).toBe(false);
   expect(result.server).toBe("localhost:8787");
   expect(result.auth).toBeNull();
 });
@@ -118,6 +119,25 @@ test("parseCliOptions accepts -h alias", () => {
   const result = parseCliOptions(["-h"]);
 
   expect(result.help).toBe(true);
+  expect(result.version).toBe(false);
+});
+
+test("parseCliOptions reads --version flag", () => {
+  const result = parseCliOptions(["--version"]);
+
+  expect(result.version).toBe(true);
+  expect(result.help).toBe(false);
+  expect(result.server).toBe("localhost:8787");
+  expect(result.auth).toBeNull();
+});
+
+test("parseCliOptions reads -v alias", () => {
+  const result = parseCliOptions(["-v"]);
+
+  expect(result.version).toBe(true);
+  expect(result.help).toBe(false);
+  expect(result.server).toBe("localhost:8787");
+  expect(result.auth).toBeNull();
 });
 
 test("parseAuthOption requires username:password format", () => {

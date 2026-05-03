@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { CLI_VERSION } from "./cli.version";
 import {
   arch,
   hostname,
@@ -49,10 +50,11 @@ export type CliOptions = {
   server: string;
   auth: string | null;
   help: boolean;
+  version: boolean;
 };
 
 const DEFAULT_SERVER = "localhost:8787";
-const HELP_TEXT = `Usage: cli.ts [options]\n\nCommands:\n  Send a 5-packet ICMP ping to 8.8.8.8 and POST the parsed result to /ping on the server.\n\nOptions:\n  --help, -h           Show this help message\n  --server <addr>      API server URL or host (default: ${DEFAULT_SERVER})\n  --server=<addr>      Same as --server\n  --auth <cred>        HTTP basic auth as username:password\n  --auth=<cred>        Same as --auth\n`;
+const HELP_TEXT = `Usage: cli.ts [options]\n\nCommands:\n  Send a 5-packet ICMP ping to 8.8.8.8 and POST the parsed result to /ping on the server.\n\nOptions:\n  --help, -h           Show this help message\n  --version, -v        Show version and exit\n  --server <addr>      API server URL or host (default: ${DEFAULT_SERVER})\n  --server=<addr>      Same as --server\n  --auth <cred>        HTTP basic auth as username:password\n  --auth=<cred>        Same as --auth\n`;
 
 export function parseAuthOption(rawAuth: string): string {
   const separatorIndex = rawAuth.indexOf(":");
@@ -68,12 +70,17 @@ export function parseCliOptions(argv: string[]): CliOptions {
   let server = DEFAULT_SERVER;
   let auth: string | null = null;
   let help = false;
+  let version = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
 
     if (arg === "--help" || arg === "-h") {
-      return { server, auth, help: true };
+      return { server, auth, help: true, version };
+    }
+
+    if (arg === "--version" || arg === "-v") {
+      return { server, auth, help, version: true };
     }
 
     if (arg === "--server") {
@@ -123,7 +130,7 @@ export function parseCliOptions(argv: string[]): CliOptions {
     }
   }
 
-  return { server, auth, help };
+  return { server, auth, help, version };
 }
 
 export function normalizeServer(rawServer: string): string {
@@ -269,6 +276,11 @@ if (import.meta.main) {
   const options = parseCliOptions(Bun.argv.slice(2));
   if (options.help) {
     console.log(HELP_TEXT.trimEnd());
+    process.exit(0);
+  }
+
+  if (options.version) {
+    console.log(`ping-monitor ${CLI_VERSION}`);
     process.exit(0);
   }
 
